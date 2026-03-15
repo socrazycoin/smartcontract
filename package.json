@@ -1,0 +1,47 @@
+{
+  "license": "ISC",
+  "scripts": {
+    "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
+    "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
+    "deploy": "ts-node --project app/tsconfig.json app/deploy.ts",
+    "upgrade-contract": "ts-node --project app/tsconfig.json app/upgrade.ts",
+    "initialize-ico": "ts-node --project app/tsconfig.json app/initialize-ico.ts",
+    "create-stage": "ts-node --project app/tsconfig.json app/create-stage.ts",
+    "set-stage-active": "ts-node --project app/tsconfig.json app/set-stage-active.ts",
+    "enable-stage-claim": "ts-node --project app/tsconfig.json app/enable-stage-claim.ts",
+    "set-whitelist-token": "ts-node --project app/tsconfig.json app/set-whitelist-token.ts",
+    "buy": "ts-node --project app/tsconfig.json app/buy.ts",
+    "claim": "ts-node --project app/tsconfig.json app/claim.ts",
+    "fund-vault": "ts-node --project app/tsconfig.json app/fund-vault.ts",
+    "emergency-withdraw": "ts-node --project app/tsconfig.json app/emergency-withdraw.ts",
+    "status": "ts-node --project app/tsconfig.json app/status.ts",
+    "read-config": "ts-node --project app/tsconfig.json app/read-config.ts",
+    "read-stage": "ts-node --project app/tsconfig.json app/read-stage.ts",
+    "read-purchase": "ts-node --project app/tsconfig.json app/read-purchase.ts",
+    "read-whitelist": "ts-node --project app/tsconfig.json app/read-whitelist.ts",
+    "close-stage": "ts-node --project app/tsconfig.json app/close-stage.ts",
+    "close-user-purchase": "ts-node --project app/tsconfig.json app/close-user-purchase.ts",
+    "close-whitelist": "ts-node --project app/tsconfig.json app/close-whitelist-token.ts",
+    "pause": "ts-node --project app/tsconfig.json app/toggle-pause.ts",
+    "transfer-admin": "ts-node --project app/tsconfig.json app/transfer-admin.ts",
+    "update-stage": "ts-node --project app/tsconfig.json app/update-stage.ts"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
+    "bs58": "^6.0.0",
+    "dotenv": "^17.3.1",
+    "ts-node": "^10.9.2"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.1.0",
+    "@types/chai": "^4.3.0",
+    "@types/mocha": "^9.0.0",
+    "chai": "^4.3.4",
+    "mocha": "^9.0.3",
+    "prettier": "^2.6.2",
+    "ts-mocha": "^10.0.0",
+    "typescript": "^5.7.3"
+  }
+}
