@@ -5,8 +5,6 @@ use anchor_lang::prelude::*;
 pub struct IcoConfig {
     /// Admin wallet that controls the ICO
     pub admin: Pubkey,
-    /// Pending admin for 2-step transfer (Pubkey::default() = none)
-    pub pending_admin: Pubkey,
     /// SPL token mint being sold
     pub token_mint: Pubkey,
     /// Total USD raised across all stages (6 decimal precision)

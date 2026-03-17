@@ -9,7 +9,6 @@ use crate::state::IcoConfig;
 pub fn handler(ctx: Context<InitializeIco>) -> Result<()> {
     let ico_config = &mut ctx.accounts.ico_config;
     ico_config.admin = ctx.accounts.admin.key();
-    ico_config.pending_admin = Pubkey::default();
     ico_config.token_mint = ctx.accounts.token_mint.key();
     ico_config.total_raised_usd = 0;
     ico_config.current_stage = u8::MAX; // no active stage

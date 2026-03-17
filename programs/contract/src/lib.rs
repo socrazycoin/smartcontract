@@ -7,7 +7,7 @@ pub mod state;
 
 use instructions::*;
 
-declare_id!("AwcrcHPXLFVDdxo3VYFYb9YaGdvJ5fpJXqCpoducpz4P");
+declare_id!("9bfF6gsLo8G8Bqmu9B4BBmNuBKuZpdf9dqjXSfS63bbp");
 
 #[program]
 pub mod contract {
@@ -76,14 +76,9 @@ pub mod contract {
         instructions::emergency_withdraw::handler_sol(ctx, amount)
     }
 
-    /// Nominate a new admin (step 1 of 2-step admin transfer).
-    pub fn nominate_admin(ctx: Context<NominateAdmin>, new_admin: Pubkey) -> Result<()> {
-        instructions::update_config::nominate_admin_handler(ctx, new_admin)
-    }
-
-    /// Accept admin role (step 2 of 2-step admin transfer).
-    pub fn accept_admin(ctx: Context<AcceptAdmin>) -> Result<()> {
-        instructions::update_config::accept_admin_handler(ctx)
+    /// Transfer admin role to a new admin.
+    pub fn transfer_admin(ctx: Context<TransferAdmin>, new_admin: Pubkey) -> Result<()> {
+        instructions::update_config::transfer_admin_handler(ctx, new_admin)
     }
 
     /// Pause or unpause the contract (disables buy and claim).

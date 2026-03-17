@@ -36,15 +36,9 @@ async function main() {
     // vault ATA may not exist yet
   }
 
-  const pendingAdmin =
-    config.pendingAdmin && !config.pendingAdmin.equals(PublicKey.default)
-      ? config.pendingAdmin.toBase58()
-      : "None";
-
   console.log("=== ICO Config ===");
   console.log(`  PDA:             ${icoConfigPda.toBase58()}`);
   console.log(`  Admin:           ${config.admin.toBase58()}`);
-  console.log(`  Pending Admin:   ${pendingAdmin}`);
   console.log(`  Token Mint:      ${config.tokenMint.toBase58()}`);
   console.log(`  Total Raised:    $${(config.totalRaisedUsd.toNumber() / 1_000_000).toFixed(6)}`);
   console.log(`  Stage Count:     ${config.stageCount}`);

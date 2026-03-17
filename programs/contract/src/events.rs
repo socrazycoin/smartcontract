@@ -31,13 +31,7 @@ pub struct EmergencyWithdrawSolEvent {
 }
 
 #[event]
-pub struct NominateAdminEvent {
-    pub current_admin: Pubkey,
-    pub nominated_admin: Pubkey,
-}
-
-#[event]
-pub struct AcceptAdminEvent {
+pub struct TransferAdminEvent {
     pub old_admin: Pubkey,
     pub new_admin: Pubkey,
 }

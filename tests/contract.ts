@@ -185,7 +185,6 @@ describe("ICO Contract – Full Coverage", () => {
       expect(cfg.totalRaisedUsd.toNumber()).to.equal(0);
       expect(cfg.stageCount).to.equal(0);
       expect(cfg.currentStage).to.equal(255); // u8::MAX = no active stage
-      expect(cfg.pendingAdmin.toBase58()).to.equal(PublicKey.default.toBase58());
     });
 
     it("cannot initialize twice (PDA already exists)", async () => {
@@ -1383,128 +1382,46 @@ describe("ICO Contract – Full Coverage", () => {
   });
 
   // ================================================================
-  // 9. NOMINATE ADMIN
+  // 9. TRANSFER ADMIN
   // ================================================================
 
-  describe("nominate_admin", () => {
-    it("admin nominates a new admin", async () => {
+  describe("transfer_admin", () => {
+    it("admin transfers role to a new admin", async () => {
       await program.methods
-        .nominateAdmin(user.publicKey)
+        .transferAdmin(user.publicKey)
         .accounts({
           admin: admin.publicKey,
           icoConfig: icoConfigPda,
         })
-        .rpc();
-
-      const cfg = await program.account.icoConfig.fetch(icoConfigPda);
-      expect(cfg.pendingAdmin.toBase58()).to.equal(user.publicKey.toBase58());
-    });
-
-    it("admin can overwrite pending nomination", async () => {
-      await program.methods
-        .nominateAdmin(user2.publicKey)
-        .accounts({
-          admin: admin.publicKey,
-          icoConfig: icoConfigPda,
-        })
-        .rpc();
-
-      const cfg = await program.account.icoConfig.fetch(icoConfigPda);
-      expect(cfg.pendingAdmin.toBase58()).to.equal(user2.publicKey.toBase58());
-
-      // Reset back to user for accept_admin tests
-      await program.methods
-        .nominateAdmin(user.publicKey)
-        .accounts({
-          admin: admin.publicKey,
-          icoConfig: icoConfigPda,
-        })
-        .rpc();
-    });
-
-    it("fails when non-admin tries to nominate (Unauthorized)", async () => {
-      await expectError(
-        program.methods
-          .nominateAdmin(nonAdmin.publicKey)
-          .accounts({
-            admin: nonAdmin.publicKey,
-            icoConfig: icoConfigPda,
-          })
-          .signers([nonAdmin])
-          .rpc(),
-        "Unauthorized"
-      );
-    });
-  });
-
-  // ================================================================
-  // 10. ACCEPT ADMIN
-  // ================================================================
-
-  describe("accept_admin", () => {
-    it("fails when wrong signer tries to accept (Unauthorized)", async () => {
-      await expectError(
-        program.methods
-          .acceptAdmin()
-          .accounts({
-            newAdmin: user2.publicKey,
-            icoConfig: icoConfigPda,
-          })
-          .signers([user2])
-          .rpc(),
-        "Unauthorized"
-      );
-    });
-
-    it("nominated user accepts admin role", async () => {
-      await program.methods
-        .acceptAdmin()
-        .accounts({
-          newAdmin: user.publicKey,
-          icoConfig: icoConfigPda,
-        })
-        .signers([user])
         .rpc();
 
       const cfg = await program.account.icoConfig.fetch(icoConfigPda);
       expect(cfg.admin.toBase58()).to.equal(user.publicKey.toBase58());
-      expect(cfg.pendingAdmin.toBase58()).to.equal(PublicKey.default.toBase58());
     });
 
-    it("fails when no pending admin (NoPendingAdmin)", async () => {
-      // pending_admin is now Pubkey::default after accept
+    it("fails when non-admin tries to transfer (Unauthorized)", async () => {
       await expectError(
         program.methods
-          .acceptAdmin()
+          .transferAdmin(nonAdmin.publicKey)
           .accounts({
-            newAdmin: user2.publicKey,
+            admin: admin.publicKey,
             icoConfig: icoConfigPda,
           })
-          .signers([user2])
           .rpc(),
-        "NoPendingAdmin"
+        "Unauthorized"
       );
     });
 
     // Transfer admin back to original admin for remaining tests
     it("transfers admin back to original admin", async () => {
-      // user is now admin — nominate original admin
+      // user is now admin — transfer back to original admin
       await program.methods
-        .nominateAdmin(admin.publicKey)
+        .transferAdmin(admin.publicKey)
         .accounts({
           admin: user.publicKey,
           icoConfig: icoConfigPda,
         })
         .signers([user])
-        .rpc();
-
-      // original admin accepts
-      await program.methods
-        .acceptAdmin()
-        .accounts({
-          newAdmin: admin.publicKey,
-          icoConfig: icoConfigPda,
-        })
         .rpc();
 
       const cfg = await program.account.icoConfig.fetch(icoConfigPda);

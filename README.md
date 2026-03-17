@@ -85,7 +85,7 @@ Same buffer approach — writes the program to a buffer first, then deploys from
 
 | Item | Value |
 |------|-------|
-| Program ID | `AwcrcHPXLFVDdxo3VYFYb9YaGdvJ5fpJXqCpoducpz4P` |
+| Program ID | `9bfF6gsLo8G8Bqmu9B4BBmNuBKuZpdf9dqjXSfS63bbp` |
 | Framework | Anchor 0.32 |
 | Instructions | 16 |
 

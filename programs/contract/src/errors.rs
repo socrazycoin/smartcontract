@@ -28,8 +28,6 @@ pub enum IcoError {
     InvalidPaymentAccount,
     #[msg("Vault has insufficient token balance")]
     InsufficientVaultBalance,
-    #[msg("No pending admin nomination")]
-    NoPendingAdmin,
     #[msg("Invalid Pyth oracle account owner")]
     InvalidPriceOracle,
     #[msg("Cannot nominate the zero address as admin")]
