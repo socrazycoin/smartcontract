@@ -20,8 +20,14 @@ pub fn handler(
         tokens_total >= ctx.accounts.stage.tokens_sold,
         IcoError::InvalidTokensTotal
     );
-    if start_time > 0 && end_time > 0 {
-        require!(end_time > start_time, IcoError::InvalidTimeRange);
+    require!(start_time >= 0, IcoError::InvalidTimeRange);
+    require!(end_time >= 0, IcoError::InvalidTimeRange);
+    if end_time > 0 {
+        let now = Clock::get()?.unix_timestamp;
+        require!(end_time > now, IcoError::EndTimeExpired);
+        if start_time > 0 {
+            require!(end_time > start_time, IcoError::InvalidTimeRange);
+        }
     }
 
     let stage = &mut ctx.accounts.stage;

@@ -72,8 +72,10 @@ async function main() {
       console.log(`  Tokens Total:  ${stage.tokensTotal.toString()}`);
       console.log(`  Tokens Sold:   ${stage.tokensSold.toString()} (${pctSold}%)`);
       console.log(`  Remaining:     ${remaining.toString()}`);
+      console.log(`  Total Raised:  $${(stage.totalRaisedUsd.toNumber() / 1_000_000).toFixed(6)}`);
       console.log(`  Active:        ${stage.isActive}`);
       console.log(`  Claim Enabled: ${stage.claimEnabled}`);
+      console.log(`  Claimed Total: ${stage.tokensClaimedTotal.toString()}`);
       console.log();
     } catch {
       // Stage doesn't exist at this ID, skip

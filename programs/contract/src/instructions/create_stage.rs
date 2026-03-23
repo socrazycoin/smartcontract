@@ -15,8 +15,14 @@ pub fn handler(
 ) -> Result<()> {
     require!(token_price_usd > 0, IcoError::ZeroAmount);
     require!(tokens_total > 0, IcoError::ZeroAmount);
-    if start_time > 0 && end_time > 0 {
-        require!(end_time > start_time, IcoError::InvalidTimeRange);
+    require!(start_time >= 0, IcoError::InvalidTimeRange);
+    require!(end_time >= 0, IcoError::InvalidTimeRange);
+    if end_time > 0 {
+        let now = Clock::get()?.unix_timestamp;
+        require!(end_time > now, IcoError::EndTimeExpired);
+        if start_time > 0 {
+            require!(end_time > start_time, IcoError::InvalidTimeRange);
+        }
     }
 
     let ico_config = &mut ctx.accounts.ico_config;
@@ -35,6 +41,7 @@ pub fn handler(
     stage.end_time = end_time;
     stage.is_active = false;
     stage.claim_enabled = false;
+    stage.tokens_claimed_total = 0;
     stage.bump = ctx.bumps.stage;
 
     ico_config.stage_count = ico_config

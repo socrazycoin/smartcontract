@@ -16,7 +16,7 @@ const USD_DECIMALS: i32 = 6;
 /// Native SOL has 9 decimals (lamports).
 const SOL_DECIMALS: i32 = 9;
 /// Maximum acceptable staleness for the Pyth price feed (seconds).
-const PRICE_STALENESS_THRESHOLD: u64 = 300;
+const PRICE_STALENESS_THRESHOLD: u64 = 120;
 /// Pyth SOL/USD price feed ID.
 const SOL_USD_FEED_ID: &str = "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
 
@@ -86,7 +86,7 @@ pub fn handler(ctx: Context<Buy>, stage_id: u8, payment_amount: u64) -> Result<(
 
     // ── Convert payment amount to USD (6-decimal precision) ──────────────
     let usd_value: u128 = if is_sol {
-        compute_sol_usd_value(&ctx.accounts.price_update, payment_amount)?
+        compute_sol_usd_value(&ctx.accounts.price_update, payment_amount, &clock)?
     } else {
         compute_stablecoin_usd_value(ctx.accounts.payment_mint.decimals, payment_amount)?
     };
@@ -114,8 +114,22 @@ pub fn handler(ctx: Context<Buy>, stage_id: u8, payment_amount: u64) -> Result<(
     require!(tokens_to_buy <= remaining, IcoError::ExceedsStageSupply);
 
     // ── Transfer payment ────────────────────────────────────────────────
+    //
+    // DUAL-PATH FUND ARCHITECTURE
+    // The destination differs by payment type and requires a different
+    // withdrawal instruction to recover funds:
+    //
+    //   SOL path        → lamports land on the ico_config PDA itself.
+    //                     Recover with: emergency_withdraw_sol
+    //
+    //   Stablecoin path → tokens land in the payment_vault, which is the
+    //                     ATA of ico_config for the payment mint.
+    //                     Each stablecoin has its own independent ATA.
+    //                     Recover with: emergency_withdraw (pass the mint)
     if is_sol {
-        // Native SOL → ico_config PDA
+        // Native SOL: system_instruction::transfer moves lamports directly
+        // from the buyer to the ico_config PDA address.  The PDA accumulates
+        // SOL as plain lamports — there is no separate SOL token account.
         invoke(
             &system_instruction::transfer(
                 &ctx.accounts.user.key(),
@@ -129,7 +143,9 @@ pub fn handler(ctx: Context<Buy>, stage_id: u8, payment_amount: u64) -> Result<(
             ],
         )?;
     } else {
-        // SPL stablecoin → payment vault (ATA of ico_config for payment mint)
+        // Stablecoin: SPL token::transfer moves tokens from the buyer's ATA
+        // to payment_vault (the ATA of ico_config for this specific mint).
+        // Created automatically when the admin calls set_whitelist_token.
         token::transfer(
             CpiContext::new(
                 ctx.accounts.token_program.to_account_info(),
@@ -205,12 +221,12 @@ pub fn handler(ctx: Context<Buy>, stage_id: u8, payment_amount: u64) -> Result<(
 fn compute_sol_usd_value(
     price_update_info: &AccountInfo,
     lamports: u64,
+    clock: &Clock,
 ) -> Result<u128> {
     let mut data: &[u8] = &price_update_info.try_borrow_data()?;
     let price_update =
         PriceUpdateV2::try_deserialize(&mut data).map_err(|_| IcoError::StalePriceFeed)?;
 
-    let clock = Clock::get()?;
     let feed_id = get_feed_id_from_hex(SOL_USD_FEED_ID).map_err(|_| IcoError::InvalidPrice)?;
     let price = price_update
         .get_price_no_older_than(&clock, PRICE_STALENESS_THRESHOLD, &feed_id)

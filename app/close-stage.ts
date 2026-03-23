@@ -7,7 +7,10 @@
  * Example:
  *   npx ts-node app/close-stage.ts 3
  *
- * Note: The stage must be inactive with claim disabled.
+ * Requirements:
+ *   1. Stage must be inactive (is_active = false)
+ *   2. Claim must be disabled (claim_enabled = false)
+ *   3. All purchased tokens must be claimed (tokens_claimed_total == tokens_sold)
  */
 import {
   createProvider,

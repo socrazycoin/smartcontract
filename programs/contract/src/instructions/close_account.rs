@@ -9,6 +9,10 @@ pub fn close_stage_handler(ctx: Context<CloseStage>, _stage_id: u8) -> Result<()
     let stage = &ctx.accounts.stage;
     require!(!stage.is_active, IcoError::StageIsActive);
     require!(!stage.claim_enabled, IcoError::StageNotSettled);
+    require!(
+        stage.tokens_claimed_total == stage.tokens_sold,
+        IcoError::UnclaimedTokensRemaining
+    );
     Ok(())
 }
 

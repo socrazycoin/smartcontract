@@ -8,7 +8,7 @@ A Solana-based Initial Coin Offering (ICO) smart contract built with Anchor 0.32
 - **Multiple payment tokens** — Accept any whitelisted SPL token (USDC, USDT, etc.) as payment.
 - **SOL payments via Pyth oracle** — Buy tokens with native SOL; USD price resolved on-chain using [Pyth Push Oracle](https://docs.pyth.network/price-feeds/core/push-feeds/solana) price feed accounts.
 - **Staged claiming** — Users claim purchased tokens only after the admin enables claiming for a stage.
-- **2-step admin transfer** — Nominate → Accept pattern prevents accidental admin loss.
+- **Admin transfer** — Single-step direct assignment of admin role to a new pubkey.
 - **Treasury update** — Admin can change the treasury wallet at any time.
 - **Vault balance guard** — `buy` verifies the vault holds enough tokens before selling.
 - **Treasury payment validation** — Stablecoin payments verify the destination matches the treasury on-chain.
@@ -87,15 +87,15 @@ Same buffer approach — writes the program to a buffer first, then deploys from
 |------|-------|
 | Program ID | `9bfF6gsLo8G8Bqmu9B4BBmNuBKuZpdf9dqjXSfS63bbp` |
 | Framework | Anchor 0.32 |
-| Instructions | 16 |
+| Instructions | 15 |
 
 ### PDA Accounts
 
 | Account | Seeds | Description |
 |---------|-------|-------------|
-| `IcoConfig` | `["ico-config"]` | Global config: admin, pending_admin, token_mint, treasury, total_raised_usd, current_stage |
-| `Stage` | `["stage", stage_id (u8)]` | Per-stage: price, supply, tokens sold, total_raised_usd, start_time, end_time, active/claim flags |
-| `WhitelistToken` | `["whitelist-token", mint]` | Payment token: enabled flag, USD price (6 decimals) |
+| `IcoConfig` | `["ico-config"]` | Global config: admin, token_mint, treasury, total_raised_usd, current_stage |
+| `Stage` | `["stage", stage_id (u8)]` | Per-stage: price, supply, tokens_sold, tokens_claimed_total, total_raised_usd, start_time, end_time, active/claim flags |
+| `WhitelistToken` | `["whitelist-token", mint]` | Payment token: enabled flag, cached decimals |
 | `UserStagePurchase` | `["user-stage", user, stage_id (u8)]` | Per-user per-stage: tokens_purchased, tokens_claimed |
 | Vault (ATA) | Associated Token Account of `IcoConfig` PDA | Holds tokens for distribution |
 
@@ -121,7 +121,33 @@ The `buy.ts` CLI script derives this PDA automatically — no manual address nee
 
 ---
 
-## Instructions (16 total)
+### Dual-Path Payment & Fund Architecture
+
+The contract uses **two separate fund destinations** depending on the payment token. Operators must understand this split to use the correct withdrawal instruction.
+
+#### Payment routing at `buy` time
+
+| Payment type | Where funds land | On-chain account type |
+|---|---|---|
+| Native SOL | `IcoConfig` PDA itself (lamports) | System-owned lamports on the PDA |
+| Stablecoins (USDC, USDT, …) | ATA of `IcoConfig` for that mint | SPL token account (`TokenAccount`) |
+
+- **SOL path:** `system_instruction::transfer` moves lamports directly from the buyer's wallet to the `IcoConfig` PDA address. The PDA accumulates SOL as plain lamports — there is no separate SOL vault.
+- **Stablecoin path:** `token::transfer` (SPL CPI) moves tokens from the buyer's token account to the **payment vault**, which is the Associated Token Account of the `IcoConfig` PDA for that specific mint. Each whitelisted stablecoin has its own ATA; it is created automatically when the admin calls `set_whitelist_token`.
+
+#### Withdrawal instructions — which one to use
+
+| Funds to recover | Instruction | Mechanism |
+|---|---|---|
+| SOL received from buyers | `emergency_withdraw_sol` | Direct lamport transfer out of PDA; enforces minimum rent reserve so the PDA is not destroyed |
+| Stablecoin tokens received from buyers | `emergency_withdraw` (pass the stablecoin mint) | PDA-signed SPL `token::transfer` from the stablecoin's ATA |
+| ICO tokens in the distribution vault | `emergency_withdraw` (pass the ICO token mint) | PDA-signed SPL `token::transfer` from the ICO token ATA |
+
+> **Operator note:** Calling `emergency_withdraw_sol` with the wrong amount could leave the PDA balance below rent-exemption — the instruction guards against this by capping the withdrawal to `lamports - min_rent`. Stablecoin balances are fully independent per mint; check each ATA separately on-chain.
+
+---
+
+## Instructions (15 total)
 
 ### 1. `initialize_ico`
 
@@ -137,7 +163,7 @@ Creates a new `Stage` PDA.
 
 - **Signer:** Admin
 - **Params:** `stage_id (u8)`, `price_usd (u64, 6 decimals)`, `tokens_total (u64, raw)`, `start_time (i64, Unix timestamp, 0 = no restriction)`, `end_time (i64, Unix timestamp, 0 = no restriction)`
-- **Validates:** `stage_id == stage_count` (sequential), `price > 0`, `tokens_total > 0`, `end_time > start_time` (when both > 0)
+- **Validates:** `stage_id == stage_count` (sequential), `price > 0`, `tokens_total > 0`, timestamps are non-negative, `end_time > now` (when set), `end_time > start_time` (when both set)
 - **Initializes:** `total_raised_usd = 0`
 
 ### 3. `set_stage_active`
@@ -160,8 +186,9 @@ Enables or disables token claiming for a stage.
 Adds, updates, or disables a whitelisted payment token.
 
 - **Signer:** Admin
-- **Params:** `mint`, `enabled (bool)`, `price_usd (u64, 6 decimals)`
-- **Creates/Updates:** `WhitelistToken` PDA for the mint
+- **Params:** `mint`, `enabled (bool)`
+- **Creates/Updates:** `WhitelistToken` PDA for the mint (caches mint decimals)
+- **Note:** Stablecoin USD value is hardcoded at $1.00 per unit (no on-chain price feed for stablecoins)
 
 ### 6. `buy`
 
@@ -169,14 +196,14 @@ Purchases tokens from the active stage.
 
 - **Signer:** Buyer
 - **Params:** `stage_id`, `payment_amount (u64, raw)`
-- **Payment methods:**
-  - **Stablecoins (USDC, USDT, etc.):** Transfers SPL tokens from buyer to treasury ATA. Validates treasury payment account matches on-chain config.
-  - **Native SOL:** Transfers SOL via `system_program::transfer` from buyer to treasury. Price is read from Pyth Push Oracle price feed account on-chain.
+- **Payment methods (dual-path — see architecture section above):**
+  - **Stablecoins (USDC, USDT, etc.):** SPL `token::transfer` from buyer's token account → payment vault (ATA of `IcoConfig` for that mint). Each stablecoin has its own separate ATA. Recover with `emergency_withdraw`.
+  - **Native SOL:** `system_instruction::transfer` (lamport transfer) from buyer → `IcoConfig` PDA itself. SOL accumulates as lamports on the PDA, not in a token account. Recover with `emergency_withdraw_sol`.
 - **Validates:**
   - Stage is active and within time window (`start_time` / `end_time`)
   - Payment token is whitelisted and enabled
-  - Vault holds enough tokens (`vault.amount >= tokens_to_buy`)
-  - Price feed is not stale (≤ 300s)
+  - Vault holds enough ICO tokens (`vault.amount >= tokens_to_buy`)
+  - Price feed is not stale (≤ 300s) — SOL path only
   - Arithmetic uses safe `u64::try_from()` (no unsafe casts)
 - **Creates/Updates:** `UserStagePurchase` PDA
 - **Updates:** `Stage.total_raised_usd`, `IcoConfig.total_raised_usd`
@@ -188,79 +215,81 @@ Claims purchased tokens from a stage.
 
 - **Signer:** User
 - **Params:** `stage_id`
-- **Validates:** Claim is enabled for the stage, user has unclaimed tokens
+- **Validates:** Claim is enabled for the stage, user has unclaimed tokens, vault has sufficient balance
 - **Transfers:** Tokens from vault ATA → user ATA (PDA-signed)
+- **Updates:** `UserStagePurchase.tokens_claimed`, `Stage.tokens_claimed_total`
 - **Emits:** `ClaimEvent`
 
 ### 8. `emergency_withdraw`
 
-Admin withdraws tokens from the vault.
+Admin withdraws SPL tokens from any ATA owned by the `IcoConfig` PDA. Use this to recover **stablecoin payments** (pass the stablecoin mint) or unsold/excess **ICO tokens** (pass the ICO token mint). Each stablecoin has its own independent ATA — call this instruction once per mint to drain each one.
 
 - **Signer:** Admin
-- **Params:** `amount (u64, raw)`
-- **Transfers:** Tokens from vault ATA → admin ATA (PDA-signed)
+- **Params:** `amount (u64, raw token units)`, `token_mint (Pubkey)`
+- **Transfers:** `vault` ATA (of `IcoConfig` for `token_mint`) → admin ATA (PDA-signed via `IcoConfig`)
+- **Does NOT affect SOL lamports on the PDA** — use `emergency_withdraw_sol` for that
 
 ### 9. `emergency_withdraw_sol`
 
-Admin withdraws SOL from the IcoConfig PDA.
+Admin withdraws SOL lamports that accumulated on the `IcoConfig` PDA from SOL-payment buyers. SOL is held directly as lamports on the PDA (not in a token account), so this instruction uses a direct lamport transfer rather than an SPL CPI.
 
 - **Signer:** Admin
 - **Params:** `amount (u64, lamports)`
+- **Validates:** `amount <= pda_lamports - min_rent_exemption` (prevents destroying the PDA by leaving it below rent threshold)
+- **Does NOT affect SPL token balances** — use `emergency_withdraw` for stablecoin or ICO token ATAs
 
-### 10. `nominate_admin`
+### 10. `transfer_admin`
 
-Step 1 of 2-step admin transfer. Current admin nominates a new admin.
+Transfer admin role directly to a new admin.
 
 - **Signer:** Current admin
 - **Params:** `new_admin (Pubkey)`
-- **Sets:** `ico_config.pending_admin = new_admin`
+- **Validates:** `new_admin != Pubkey::default()`
+- **Sets:** `ico_config.admin = new_admin`
 
-### 11. `accept_admin`
+> **⚠️ Warning:** This is a single-step direct assignment. If the admin passes an incorrect pubkey, admin access is permanently lost and all admin-gated functionality becomes inaccessible.
 
-Step 2 of 2-step admin transfer. Nominated admin accepts the role.
-
-- **Signer:** Nominated admin (`pending_admin`)
-- **Validates:** `pending_admin != Pubkey::default()`, signer matches `pending_admin`
-- **Sets:** `admin = pending_admin`, `pending_admin = Pubkey::default()`
-
-### 12. `toggle_pause`
+### 11. `toggle_pause`
 
 Pause or unpause the contract. When paused, `buy` and `claim` are disabled.
 
 - **Signer:** Admin
 - **Params:** `paused (bool)`
 
-### 13. `update_stage`
+### 12. `update_stage`
 
 Updates a stage's price, total allocation, and time window. The stage must be inactive.
 
 - **Signer:** Admin
 - **Params:** `stage_id (u8)`, `token_price_usd (u64, 6 decimals)`, `tokens_total (u64, raw)`, `start_time (i64)`, `end_time (i64)`
-- **Validates:** Stage is inactive, `price > 0`, `tokens_total >= tokens_sold`, `end_time > start_time` (when both > 0)
+- **Validates:** Stage is inactive, `price > 0`, `tokens_total >= tokens_sold`, timestamps are non-negative, `end_time > now` (when set), `end_time > start_time` (when both set)
 
-### 14. `update_treasury`
+### 13. `update_treasury`
 
 Admin updates the treasury wallet address.
 
 - **Signer:** Admin
 - **Params:** `new_treasury (Pubkey)`
 
-### 15. `close_stage`
+### 14. `close_stage`
 
-Closes a settled stage account to reclaim rent.
+Closes a fully settled stage account to reclaim rent.
 
 - **Signer:** Admin
 - **Params:** `stage_id (u8)`
-- **Validates:** Stage is inactive, claim is disabled
+- **Validates:**
+  1. Stage is inactive (`is_active = false`)
+  2. Claim is disabled (`claim_enabled = false`)
+  3. All purchased tokens have been claimed (`tokens_claimed_total == tokens_sold`)
 
-### 16. `close_whitelist_token`
+### 15. `close_whitelist_token`
 
 Closes a disabled whitelist token account to reclaim rent.
 
 - **Signer:** Admin
 - **Validates:** Token is disabled
 
-### 17. `close_user_purchase`
+### 16. `close_user_purchase`
 
 Closes a fully settled user purchase account to reclaim rent.
 
@@ -313,13 +342,13 @@ yarn enable-stage-claim <stage_id> <true|false>
 #### Set Whitelist Token
 
 ```bash
-yarn set-whitelist-token <mint> <true|false> <price_usd_6dec>
+yarn set-whitelist-token <mint> <true|false>
 ```
 
-Example — Whitelist USDC at $1:
+Example — Whitelist USDC:
 
 ```bash
-yarn set-whitelist-token EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v true 1000000
+yarn set-whitelist-token EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v true
 ```
 
 #### Fund Vault
@@ -360,9 +389,9 @@ Pause or unpause the contract (disables buy and claim):
 yarn pause <true|false>
 ```
 
-#### Transfer Admin (2-step)
+#### Transfer Admin
 
-Nominate and accept a new admin:
+Transfer admin role directly to a new pubkey (⚠️ single-step, irreversible):
 
 ```bash
 yarn transfer-admin <new_admin_pubkey>
@@ -412,7 +441,7 @@ yarn claim <stage_id>
 
 #### Read Config
 
-Display `IcoConfig` account (admin, treasury, token mint, total raised, pending admin, vault balance):
+Display `IcoConfig` account (admin, treasury, token mint, total raised, vault balance):
 
 ```bash
 yarn read-config
@@ -470,8 +499,8 @@ yarn create-stage 1 1000 77777777000000000 1700000000 1710000000
 yarn create-stage 2 5000 50000000000000000 0 0   # no time restriction
 
 # 4. Whitelist payment tokens
-yarn set-whitelist-token EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v true 1000000  # USDC
-yarn set-whitelist-token So11111111111111111111111111111111111111112 true 0          # SOL (Pyth)
+yarn set-whitelist-token EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v true   # USDC (hardcoded $1)
+yarn set-whitelist-token So11111111111111111111111111111111111111112 true         # SOL (Pyth oracle)
 
 # 5. Fund the vault with tokens
 yarn fund-vault 500000000000000000
@@ -497,14 +526,16 @@ yarn enable-stage-claim 1 true
 # 11. Users claim tokens
 yarn claim 1
 
-# 12. Move to next stage
+# 12. Once all users have claimed (tokens_claimed_total == tokens_sold),
+#     disable claiming and move to next stage
+yarn enable-stage-claim 1 false
 yarn set-stage-active 1 false
 yarn set-stage-active 2 true
 
 # 13. Update stage (must be inactive)
 yarn update-stage 2 6000 60000000000000 0 0
 
-# 14. Admin transfer (2-step: nominate → accept)
+# 14. Admin transfer (single-step, irreversible)
 yarn transfer-admin <new_admin_pubkey>
 
 # 15. Pause/unpause
@@ -512,6 +543,7 @@ yarn pause true
 yarn pause false
 
 # 16. Close settled accounts to reclaim rent
+#     close-stage requires: inactive + claim disabled + tokens_claimed_total == tokens_sold
 yarn close-stage 1
 yarn close-user-purchase 1
 ```
@@ -523,7 +555,7 @@ yarn close-user-purchase 1
 
 | Feature | Description |
 |---------|-------------|
-| **2-step admin transfer** | `nominate_admin` → `accept_admin` prevents accidental admin key loss |
+| **Single-step admin transfer** | `transfer_admin` directly assigns new admin — **no nominate/accept safety net; typos cause permanent admin loss** |
 | **Treasury payment validation** | Stablecoin `buy` verifies destination ATA matches on-chain treasury |
 | **Vault balance guard** | `buy` checks `vault.amount >= tokens_to_buy` before selling |
 | **Safe arithmetic** | `u64::try_from()` for all conversions — no unsafe `as u64` casts |
@@ -531,6 +563,7 @@ yarn close-user-purchase 1
 | **PDA-signed transfers** | Vault → user token transfers signed by `IcoConfig` PDA |
 | **Single active stage** | Only one stage can be active at any time |
 | **Stage time window** | `buy` enforces `start_time` / `end_time` boundaries when set |
+| **Settlement guard on close** | `close_stage` requires `tokens_claimed_total == tokens_sold` — prevents closing a stage while users still have unclaimed balances |
 
 ## Error Codes
 
@@ -547,10 +580,22 @@ yarn close-user-purchase 1
 | `ZeroAmount` | Payment amount is zero |
 | `StalePriceFeed` | Pyth price feed older than 300 seconds |
 | `InvalidPrice` | Oracle returned invalid price (≤ 0) |
-| `InvalidPaymentAccount` | Stablecoin destination doesn't match treasury |
+| `InvalidPaymentAccount` | Payment token account is invalid or does not match expected owner/mint |
 | `InsufficientVaultBalance` | Vault doesn't hold enough tokens for the purchase |
-| `NoPendingAdmin` | `accept_admin` called with no pending nomination |
-| `InvalidTimeRange` | `end_time` must be greater than `start_time` |
+| `InvalidPriceOracle` | Pyth price feed account is not owned by the expected oracle program |
+| `InvalidAdmin` | `transfer_admin` called with `Pubkey::default()` |
+| `InvalidStageId` | `stage_id` is not sequential (must equal `stage_count + 1`) |
+| `InvalidStage` | Stage account does not match the provided `stage_id` |
+| `DecimalsMismatch` | Payment mint decimals differ from the cached whitelist token decimals |
+| `ContractPaused` | Contract is paused; `buy` and `claim` are disabled |
+| `StageIsActive` | Stage must be deactivated before this operation |
+| `StageNotSettled` | Claim must be disabled before closing a stage |
+| `TokenStillEnabled` | Whitelist token must be disabled before its account can be closed |
+| `PurchaseNotSettled` | All purchased tokens must be claimed before closing a purchase account |
+| `UnclaimedTokensRemaining` | All purchased tokens must be claimed before closing the stage |
+| `InvalidTokensTotal` | `tokens_total` cannot be set below `tokens_sold` |
+| `InvalidTimeRange` | Timestamps must be non-negative and `end_time` must be greater than `start_time` |
+| `EndTimeExpired` | `end_time` is already in the past relative to the current clock |
 | `StageNotStarted` | Current time is before the stage's `start_time` |
 | `StageEnded` | Current time is past the stage's `end_time` |
 
@@ -577,7 +622,7 @@ yarn close-user-purchase 1
 │       ├── buy.rs                  # Handles SOL (Pyth) + stablecoin payments
 │       ├── claim.rs
 │       ├── emergency_withdraw.rs
-│       ├── update_config.rs        # nominate_admin, accept_admin, toggle_pause, update_treasury
+│       ├── update_config.rs        # transfer_admin, toggle_pause
 │       ├── update_stage.rs
 │       └── close_account.rs        # close_stage, close_whitelist_token, close_user_purchase
 ├── app/                            # TypeScript CLI scripts

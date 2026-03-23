@@ -49,6 +49,13 @@ pub fn handler(ctx: Context<Claim>, stage_id: u8) -> Result<()> {
         .checked_add(claimable)
         .ok_or(IcoError::Overflow)?;
 
+    ctx.accounts.stage.tokens_claimed_total = ctx
+        .accounts
+        .stage
+        .tokens_claimed_total
+        .checked_add(claimable)
+        .ok_or(IcoError::Overflow)?;
+
     emit!(ClaimEvent {
         user: ctx.accounts.user.key(),
         stage_id,
@@ -71,6 +78,7 @@ pub struct Claim<'info> {
     pub ico_config: Account<'info, IcoConfig>,
 
     #[account(
+        mut,
         seeds = [b"stage".as_ref(), &[stage_id]],
         bump = stage.bump,
     )]

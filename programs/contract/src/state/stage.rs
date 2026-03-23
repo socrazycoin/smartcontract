@@ -21,6 +21,8 @@ pub struct Stage {
     pub is_active: bool,
     /// Whether users can claim tokens from this stage
     pub claim_enabled: bool,
+    /// Total tokens claimed by all users in this stage (in token base units)
+    pub tokens_claimed_total: u64,
     /// PDA bump seed
     pub bump: u8,
 }

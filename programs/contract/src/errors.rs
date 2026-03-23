@@ -48,10 +48,14 @@ pub enum IcoError {
     TokenStillEnabled,
     #[msg("Claim all tokens before closing")]
     PurchaseNotSettled,
+    #[msg("All purchased tokens must be claimed before closing the stage")]
+    UnclaimedTokensRemaining,
     #[msg("tokens_total cannot be less than tokens_sold")]
     InvalidTokensTotal,
-    #[msg("end_time must be greater than start_time")]
+    #[msg("Timestamps must be non-negative and end_time must be greater than start_time")]
     InvalidTimeRange,
+    #[msg("end_time is in the past")]
+    EndTimeExpired,
     #[msg("Stage has not started yet")]
     StageNotStarted,
     #[msg("Stage has ended")]

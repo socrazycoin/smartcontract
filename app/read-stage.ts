@@ -53,6 +53,7 @@ function printStage(stage: any) {
   console.log(`  End Time:         ${fmtTime(endTime)}`);
   console.log(`  Active:           ${stage.isActive}`);
   console.log(`  Claim Enabled:    ${stage.claimEnabled}`);
+  console.log(`  Claimed Total:    ${toBN(stage.tokensClaimedTotal).toString()}`);
   console.log(`  Bump:             ${stage.bump}`);
   console.log();
 }

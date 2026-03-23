@@ -1854,6 +1854,24 @@ describe("ICO Contract – Full Coverage", () => {
       );
     });
 
+    it("fails to close stage with outstanding unclaimed tokens (UnclaimedTokensRemaining)", async () => {
+      // Stage 2: inactive, claim_enabled=false, but user bought and never claimed.
+      // tokens_claimed_total (0) != tokens_sold (>0) → guard fires.
+      const [sPda] = stagePda(program.programId, STAGE_2_ID);
+
+      await expectError(
+        program.methods
+          .closeStage(STAGE_2_ID)
+          .accounts({
+            admin: admin.publicKey,
+            icoConfig: icoConfigPda,
+            stage: sPda,
+          })
+          .rpc(),
+        "UnclaimedTokensRemaining"
+      );
+    });
+
     it("closes a settled stage (stage 3 — inactive, no claim)", async () => {
       // Stage 3 (TINY_STAGE_ID): inactive, claim_enabled=false
       const TINY_STAGE_ID = 3;

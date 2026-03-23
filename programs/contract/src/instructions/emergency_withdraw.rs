@@ -6,7 +6,15 @@ use crate::errors::IcoError;
 use crate::events::{EmergencyWithdrawEvent, EmergencyWithdrawSolEvent};
 use crate::state::IcoConfig;
 
-/// Emergency withdrawal of SPL tokens from any vault (ATA of ico_config PDA).
+/// Emergency withdrawal of SPL tokens from any ATA owned by the ico_config PDA.
+///
+/// Use this to recover:
+///   - Stablecoin payments (USDC, USDT, …): pass the stablecoin mint.
+///     Each whitelisted stablecoin has its own independent ATA; call once per mint.
+///   - Unsold or excess ICO tokens: pass the ICO token mint.
+///
+/// This instruction operates on SPL token accounts (ATAs) only.
+/// It does NOT touch SOL lamports on the PDA — use emergency_withdraw_sol for that.
 pub fn handler(ctx: Context<EmergencyWithdraw>, amount: u64) -> Result<()> {
     require!(amount > 0, IcoError::ZeroAmount);
 
@@ -34,7 +42,17 @@ pub fn handler(ctx: Context<EmergencyWithdraw>, amount: u64) -> Result<()> {
     Ok(())
 }
 
-/// Emergency withdrawal of SOL from the ico_config PDA.
+/// Emergency withdrawal of SOL lamports from the ico_config PDA.
+///
+/// SOL received from buyers via the `buy` instruction is stored as plain lamports
+/// on the ico_config PDA itself (not in a token account).  This instruction drains
+/// those lamports using a direct lamport transfer rather than an SPL CPI.
+///
+/// A minimum rent-exemption reserve is always preserved so the PDA is not destroyed.
+/// Available SOL = pda_lamports - min_rent_exemption(pda_data_len).
+///
+/// This instruction operates on lamports only.
+/// It does NOT touch SPL token balances — use emergency_withdraw for those.
 pub fn handler_sol(ctx: Context<EmergencyWithdrawSol>, amount: u64) -> Result<()> {
     require!(amount > 0, IcoError::ZeroAmount);
 
