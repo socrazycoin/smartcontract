@@ -9,9 +9,8 @@ A Solana-based Initial Coin Offering (ICO) smart contract built with Anchor 0.32
 - **SOL payments via Pyth oracle** — Buy tokens with native SOL; USD price resolved on-chain using [Pyth Push Oracle](https://docs.pyth.network/price-feeds/core/push-feeds/solana) price feed accounts.
 - **Staged claiming** — Users claim purchased tokens only after the admin enables claiming for a stage.
 - **Admin transfer** — Single-step direct assignment of admin role to a new pubkey.
-- **Treasury update** — Admin can change the treasury wallet at any time.
-- **Vault balance guard** — `buy` verifies the vault holds enough tokens before selling.
-- **Treasury payment validation** — Stablecoin payments verify the destination matches the treasury on-chain.
+- **Vault balance guard** — `claim` verifies the vault holds enough tokens before transferring.
+- **Payment vault validation** — Stablecoin payments verify the destination ATA is owned by the `IcoConfig` PDA.
 - **On-chain accounting** — Per-user purchase records; total USD raised tracking (global + per-stage).
 - **Read scripts** — Inspect any on-chain account (config, stage, purchase, whitelist) from CLI.
 - **6-decimal USD precision** throughout all price calculations.
@@ -93,7 +92,7 @@ Same buffer approach — writes the program to a buffer first, then deploys from
 
 | Account | Seeds | Description |
 |---------|-------|-------------|
-| `IcoConfig` | `["ico-config"]` | Global config: admin, token_mint, treasury, total_raised_usd, current_stage |
+| `IcoConfig` | `["ico-config"]` | Global config: admin, token_mint, total_raised_usd, current_stage, stage_count, paused |
 | `Stage` | `["stage", stage_id (u8)]` | Per-stage: price, supply, tokens_sold, tokens_claimed_total, total_raised_usd, start_time, end_time, active/claim flags |
 | `WhitelistToken` | `["whitelist-token", mint]` | Payment token: enabled flag, cached decimals |
 | `UserStagePurchase` | `["user-stage", user, stage_id (u8)]` | Per-user per-stage: tokens_purchased, tokens_claimed |
@@ -108,7 +107,7 @@ When buying with native SOL (`So11111111111111111111111111111111111111112`), the
 | Pyth Push Oracle Program | `pythWSnswVUd12oZpeFP8e9CVaEqJg25g1Vtc2biRsT` |
 | SOL/USD Feed ID | `ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d` |
 | Price Feed Account (shard 0) | `7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE` |
-| Staleness threshold | 300 seconds (safe for ICO context; mainnet feeds update every ~60s) |
+| Staleness threshold | 120 seconds |
 
 The price feed account PDA is derived as:
 
@@ -154,8 +153,8 @@ The contract uses **two separate fund destinations** depending on the payment to
 Creates the `IcoConfig` PDA. Must be called once before any other instruction.
 
 - **Signer:** Admin
-- **Params:** `token_mint`, `treasury`
-- **Initializes:** `IcoConfig` with `pending_admin = Pubkey::default()`, `current_stage = 255` (no active stage)
+- **Params:** `token_mint`
+- **Initializes:** `IcoConfig` with `current_stage = 255` (no active stage)
 
 ### 2. `create_stage`
 
@@ -163,7 +162,7 @@ Creates a new `Stage` PDA.
 
 - **Signer:** Admin
 - **Params:** `stage_id (u8)`, `price_usd (u64, 6 decimals)`, `tokens_total (u64, raw)`, `start_time (i64, Unix timestamp, 0 = no restriction)`, `end_time (i64, Unix timestamp, 0 = no restriction)`
-- **Validates:** `stage_id == stage_count` (sequential), `price > 0`, `tokens_total > 0`, timestamps are non-negative, `end_time > now` (when set), `end_time > start_time` (when both set)
+- **Validates:** `stage_id == stage_count + 1` (sequential), `price > 0`, `tokens_total > 0`, timestamps are non-negative, `end_time > now` (when set), `end_time > start_time` (when both set)
 - **Initializes:** `total_raised_usd = 0`
 
 ### 3. `set_stage_active`
@@ -202,8 +201,8 @@ Purchases tokens from the active stage.
 - **Validates:**
   - Stage is active and within time window (`start_time` / `end_time`)
   - Payment token is whitelisted and enabled
-  - Vault holds enough ICO tokens (`vault.amount >= tokens_to_buy`)
-  - Price feed is not stale (≤ 300s) — SOL path only
+  - Stage has remaining supply (`tokens_to_buy <= tokens_total - tokens_sold`)
+  - Price feed is not stale (≤ 120s) — SOL path only
   - Arithmetic uses safe `u64::try_from()` (no unsafe casts)
 - **Creates/Updates:** `UserStagePurchase` PDA
 - **Updates:** `Stage.total_raised_usd`, `IcoConfig.total_raised_usd`
@@ -264,14 +263,7 @@ Updates a stage's price, total allocation, and time window. The stage must be in
 - **Params:** `stage_id (u8)`, `token_price_usd (u64, 6 decimals)`, `tokens_total (u64, raw)`, `start_time (i64)`, `end_time (i64)`
 - **Validates:** Stage is inactive, `price > 0`, `tokens_total >= tokens_sold`, timestamps are non-negative, `end_time > now` (when set), `end_time > start_time` (when both set)
 
-### 13. `update_treasury`
-
-Admin updates the treasury wallet address.
-
-- **Signer:** Admin
-- **Params:** `new_treasury (Pubkey)`
-
-### 14. `close_stage`
+### 13. `close_stage`
 
 Closes a fully settled stage account to reclaim rent.
 
@@ -282,14 +274,14 @@ Closes a fully settled stage account to reclaim rent.
   2. Claim is disabled (`claim_enabled = false`)
   3. All purchased tokens have been claimed (`tokens_claimed_total == tokens_sold`)
 
-### 15. `close_whitelist_token`
+### 14. `close_whitelist_token`
 
 Closes a disabled whitelist token account to reclaim rent.
 
 - **Signer:** Admin
 - **Validates:** Token is disabled
 
-### 16. `close_user_purchase`
+### 15. `close_user_purchase`
 
 Closes a fully settled user purchase account to reclaim rent.
 
@@ -441,7 +433,7 @@ yarn claim <stage_id>
 
 #### Read Config
 
-Display `IcoConfig` account (admin, treasury, token mint, total raised, vault balance):
+Display `IcoConfig` account (admin, token mint, total raised, vault balance):
 
 ```bash
 yarn read-config
@@ -547,7 +539,6 @@ yarn pause false
 yarn close-stage 1
 yarn close-user-purchase 1
 ```
-```
 
 ---
 
@@ -556,10 +547,10 @@ yarn close-user-purchase 1
 | Feature | Description |
 |---------|-------------|
 | **Single-step admin transfer** | `transfer_admin` directly assigns new admin — **no nominate/accept safety net; typos cause permanent admin loss** |
-| **Treasury payment validation** | Stablecoin `buy` verifies destination ATA matches on-chain treasury |
-| **Vault balance guard** | `buy` checks `vault.amount >= tokens_to_buy` before selling |
+| **Payment vault validation** | Stablecoin `buy` verifies destination ATA is owned by the `IcoConfig` PDA |
+| **Vault balance guard** | `claim` checks `vault.amount >= claimable` before transferring tokens |
 | **Safe arithmetic** | `u64::try_from()` for all conversions — no unsafe `as u64` casts |
-| **Price staleness check** | Pyth price feed must be ≤ 300s old |
+| **Price staleness check** | Pyth price feed must be ≤ 120s old |
 | **PDA-signed transfers** | Vault → user token transfers signed by `IcoConfig` PDA |
 | **Single active stage** | Only one stage can be active at any time |
 | **Stage time window** | `buy` enforces `start_time` / `end_time` boundaries when set |
@@ -578,7 +569,7 @@ yarn close-user-purchase 1
 | `ClaimNotEnabled` | Claiming is not enabled for this stage |
 | `NothingToClaim` | User has no unclaimed tokens |
 | `ZeroAmount` | Payment amount is zero |
-| `StalePriceFeed` | Pyth price feed older than 300 seconds |
+| `StalePriceFeed` | Pyth price feed older than 120 seconds |
 | `InvalidPrice` | Oracle returned invalid price (≤ 0) |
 | `InvalidPaymentAccount` | Payment token account is invalid or does not match expected owner/mint |
 | `InsufficientVaultBalance` | Vault doesn't hold enough tokens for the purchase |
@@ -605,7 +596,7 @@ yarn close-user-purchase 1
 
 ```
 ├── programs/contract/src/
-│   ├── lib.rs                      # Program entry point (16 instructions)
+│   ├── lib.rs                      # Program entry point (15 instructions)
 │   ├── errors.rs                   # Custom error codes
 │   ├── events.rs                   # BuyEvent, ClaimEvent, CreateStageEvent, UpdateStageEvent, etc.
 │   ├── state/                      # On-chain account structures

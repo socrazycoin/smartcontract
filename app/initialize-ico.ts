@@ -5,7 +5,7 @@
  *   npx ts-node app/initialize-ico.ts
  *
  * Required .env:
- *   ADMIN_KEYPAIR, CLUSTER_URL, TOKEN_MINT, TREASURY
+ *   ADMIN_KEYPAIR, CLUSTER_URL, TOKEN_MINT
  */
 import { getAssociatedTokenAddress } from "@solana/spl-token";
 import {
